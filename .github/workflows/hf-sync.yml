@@ -21,7 +21,7 @@ jobs:
         run: |
           git config --global user.email "thameem022@gmail.com"
           git config --global user.name "Thameem022"
-          git push --force https://mlops-group8:$HF_TOKEN@huggingface.co/spaces/mlops-group8/case-study-1 HEAD:main
+          git push --force https://mlops-group8:$HF_TOKEN@huggingface.co/spaces/mlops-group8/mlops-group8/case-study-1-local HEAD:main
 
       - name: Notify Slack (on success)
         if: success()  
