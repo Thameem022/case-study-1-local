@@ -22,3 +22,19 @@ jobs:
           git config --global user.email "thameem022@gmail.com"
           git config --global user.name "Thameem022"
           git push --force https://mlops-group8:$HF_TOKEN@huggingface.co/spaces/mlops-group8/case-study-1 HEAD:main
+
+      - name: Notify Slack (on success)
+        if: success()  
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_USERNAME: "GitHub Actions Bot"
+          SLACK_ICON_EMOJI: ":hugging_face:"
+          SLACK_COLOR: "#36a64f"
+          SLACK_TITLE: "✅ Hugging Face Sync Successful"
+          SLACK_MESSAGE: |
+            Repo: ${{ github.repository }}
+            Branch: ${{ github.ref }}
+            Commit: ${{ github.sha }}
+            Author: ${{ github.actor }}
+            Message: ${{ github.event.head_commit.message }}
