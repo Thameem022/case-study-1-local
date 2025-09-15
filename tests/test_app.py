@@ -1,7 +1,9 @@
 import sys, os
 import pytest
+import torch
 from unittest.mock import MagicMock
 
+# --- Create dummy replacements ---
 class DummyTokenizer:
     pad_token_id = 0
     eos_token_id = 1
@@ -11,7 +13,8 @@ class DummyTokenizer:
         return "mock_prompt"
 
     def __call__(self, prompt, return_tensors=None):
-        return {"input_ids": [[0, 1]]}
+        # Must look like transformers output
+        return {"input_ids": torch.tensor([[0, 1]])}
 
     def decode(self, tokens, skip_special_tokens=True):
         return "• Easy switch"
@@ -20,14 +23,16 @@ class DummyTokenizer:
 class DummyModel:
     def to(self, device): return self
     def eval(self): return self
-    def generate(self, **kwargs): return [[0, 1, 2, 3]]
+    def generate(self, **kwargs): return torch.tensor([[0, 1, 2, 3]])
 
 
+# --- Insert mocks into sys.modules before app is imported ---
 sys.modules["transformers"] = MagicMock(
     AutoTokenizer=MagicMock(from_pretrained=lambda *a, **kw: DummyTokenizer()),
     AutoModelForCausalLM=MagicMock(from_pretrained=lambda *a, **kw: DummyModel())
 )
 
+# Now safe to import app
 import app
 
 
