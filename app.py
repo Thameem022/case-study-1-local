@@ -1,21 +1,16 @@
-import os, re
 import gradio as gr
 from huggingface_hub import login
-from transformers import AutoTokenizer, AutoModelForCausalLM, StoppingCriteria, StoppingCriteriaList
+
+from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
+import os
 
-# --- Auth (safe if HF_TOKEN is unset) ---
 hf_token = os.getenv("HF_TOKEN")
-if hf_token:
-    login(token=hf_token)
+login(token=hf_token)
 
-# --- Model & Tokenizer ---
-model_id = "meta-llama/Llama-3.2-1B"
+model_id = "meta-llama/Llama-3.2-1B"  # small enough to run locally on CPU
 tokenizer = AutoTokenizer.from_pretrained(model_id, token=hf_token)
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
 model = AutoModelForCausalLM.from_pretrained(model_id, token=hf_token)
-model.eval()
 
 SYSTEM_PROMPT = """
 You are Sustainable.ai, a friendly, encouraging, and knowledgeable AI assistant. Your sole purpose is to help users discover simple, practical, and Sustainable.ai alternatives to their everyday actions. You are a supportive guide on their eco-journey, never a critic. Your goal is to make sustainability feel accessible and effortless.
@@ -52,86 +47,29 @@ Example 4 (Praise):
 Final Instruction: You are Sustainable.ai. You are a friend, a cheerleader, and a source of simple, positive ideas. Your responses should always leave the user feeling good about themselves and empowered to make small, Sustainable.ai changes.
 """
 
-ASSISTANT_PREFIX = "Assistant:"
+def chat(user_prompt):
+    full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {user_prompt}\nAssistant:"
+    inputs = tokenizer(full_prompt, return_tensors="pt")
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=100,
+        do_sample=True,
+        temperature=0.7,
+        top_p=0.9
+    )
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-# --- Stopping when the model starts to ramble back into the prompt format ---
-STOP_STRINGS = ["\nUser:", "\nUSER:", "\nSystem:", "\nAssistant:", "\nASSISTANT:"]
-
-class StopOnStrings(StoppingCriteria):
-    def __init__(self, stop_strings, tokenizer):
-        self.stop_ids = [tokenizer(s, return_tensors="pt").input_ids.squeeze(0) for s in stop_strings]
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs):
-        for sid in self.stop_ids:
-            k = sid.shape[-1]
-            if k <= input_ids.shape[-1] and torch.equal(input_ids[0, -k:], sid):
-                return True
-        return False
-
-def _format_guard(decoded: str) -> str:
-    if ASSISTANT_PREFIX in decoded:
-        decoded = decoded.split(ASSISTANT_PREFIX, 1)[-1].strip()
-
-    # Remove any nested verdict lines accidentally included inside quotes
-    decoded = re.sub(r"\*(?:APPROVED|DISAPPROVED)\*.*?\(Confidence: *\d{1,3}%\)", "", decoded, flags=re.IGNORECASE)
-
-    patt = r'^\*(APPROVED|DISAPPROVED)\*\s*[–-]\s*[“"](.*?)[”"]\s*\(Confidence:\s*(\d{1,3})%\)\s*$'
-    m = re.search(patt, decoded, flags=re.IGNORECASE | re.DOTALL)
-    if m:
-        label = m.group(1).upper()
-        quip = m.group(2).strip().replace('\n', ' ')
-        conf = max(0, min(100, int(m.group(3))))
-        return f"*{label}* – “{quip}” (Confidence: {conf}%)"
-
-    # --- Salvage path if regex fails ---
-    text_lc = decoded.lower()
-    if "approved" in text_lc and "disapproved" not in text_lc:
-        label = "APPROVED"
-    elif "disapproved" in text_lc and "approved" not in text_lc:
-        label = "DISAPPROVED"
-    else:
-        label = "DISAPPROVED"
-
-    lines = [ln.strip() for ln in decoded.splitlines() if ln.strip()]
-    quip = lines[0] if lines else "Compliance is not optional, it’s a lifestyle."
-    # Remove verdict markers if they leaked into quip
-    quip = re.sub(r"\*(?:APPROVED|DISAPPROVED)\*", "", quip).strip()
-
-    conf = 95 if label == "DISAPPROVED" else 92
-    return f"*{label}* – “{quip}” (Confidence: {conf}%)"
-
-def chat(user_prompt: str) -> str:
-    full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {user_prompt}\n{ASSISTANT_PREFIX}"
-    inputs = tokenizer(full_prompt, return_tensors="pt", padding=True)
-
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=160,              # enough to finish one line
-            do_sample=True,
-            temperature=0.5,                 # steadier tone
-            top_p=0.8,
-            repetition_penalty=1.05,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-            stopping_criteria=StoppingCriteriaList([StopOnStrings(STOP_STRINGS, tokenizer)]),
-        )
-
-    decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return _format_guard(decoded)
-
-# --- Gradio UI ---
-chatbot = gr.Interface(
-    fn=chat,
-    inputs="text",
-    outputs="text",
-    title="Evil CEO Approval Classifier",
-    description="Submit an image description or idea. Receive an over-the-top corporate verdict.",
-)
+"""
+For information on how to customize the ChatInterface, peruse the gradio docs: https://www.gradio.app/docs/chatinterface
+"""
+chatbot = gr.Interface(fn=chat, inputs="text", outputs="text", title="Local HF Model Chatbot")
 
 with gr.Blocks() as demo:
     with gr.Sidebar():
         gr.LoginButton()
     chatbot.render()
 
+
 if __name__ == "__main__":
-    demo.queue().launch()
+    demo.launch()
+
