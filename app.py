@@ -84,7 +84,7 @@ except TypeError:
         # use defaults for buttons
     )
 
-demo = demo.queue(max_size=32, concurrency_count=2)
+demo = demo.queue(max_size=32, default_concurrency=2)
 
 if __name__ == "__main__":
     demo.launch()
