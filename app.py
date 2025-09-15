@@ -50,6 +50,7 @@ Final Instruction: You are Sustainable.ai. You are a friend, a cheerleader, and 
 def chat(user_prompt):
     full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {user_prompt}\nAssistant:"
     inputs = tokenizer(full_prompt, return_tensors="pt")
+    input_length = inputs.input_ids.shape[1]
     outputs = model.generate(
         **inputs,
         max_new_tokens=100,
@@ -57,7 +58,8 @@ def chat(user_prompt):
         temperature=0.7,
         top_p=0.9
     )
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+    new_tokens = outputs[0][input_length:]
+    return tokenizer.decode(new_tokens, skip_special_tokens=True)
 
 """
 For information on how to customize the ChatInterface, peruse the gradio docs: https://www.gradio.app/docs/chatinterface
