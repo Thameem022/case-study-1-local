@@ -48,16 +48,28 @@ Final Instruction: You are Sustainable.ai. You are a friend, a cheerleader, and 
 """
 
 def chat(user_prompt):
-    full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {user_prompt}\nAssistant:"
-    inputs = tokenizer(full_prompt, return_tensors="pt")
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    # Use the tokenizer's chat template for correct formatting
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    
+    inputs = tokenizer(prompt, return_tensors="pt")
     input_length = inputs.input_ids.shape[1]
+
+    # Generate a response, making sure it knows when to stop
     outputs = model.generate(
         **inputs,
-        max_new_tokens=100,
+        max_new_tokens=150,
         do_sample=True,
         temperature=0.7,
-        top_p=0.9
+        top_p=0.9,
+        eos_token_id=tokenizer.convert_tokens_to_ids("<|eot_id|>")
     )
+
+    # Decode only the newly generated tokens
     new_tokens = outputs[0][input_length:]
     return tokenizer.decode(new_tokens, skip_special_tokens=True)
 
