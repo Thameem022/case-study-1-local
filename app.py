@@ -1,74 +1,94 @@
+import os
+import torch
 import gradio as gr
 from huggingface_hub import login
 from transformers import AutoTokenizer, AutoModelForCausalLM
-import torch
-import os
 
-# --- Step 1: Authentication and Model Loading ---
-# Make sure you have set your HF_TOKEN in your environment (e.g., in Hugging Face Spaces secrets)
-hf_token = os.getenv("HF_TOKEN")
-if not hf_token:
-    raise ValueError("Hugging Face token not found. Please set the HF_TOKEN environment variable.")
-login(token=hf_token)
+# -------- Auth & model selection --------
+HF_TOKEN = os.getenv("HF_TOKEN")
+if not HF_TOKEN:
+    raise RuntimeError("HF_TOKEN not found. In Spaces, add it under Settings → Repository secrets.")
 
-model_id = "meta-llama/Llama-3.2-1B"
+login(token=HF_TOKEN)
 
-# Load model and tokenizer
+MODEL_ID = "meta-llama/Llama-3.2-1B"
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# -------- Load tokenizer & model --------
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, token=HF_TOKEN)
 model = AutoModelForCausalLM.from_pretrained(
-    model_id, 
-    token=hf_token, 
-    torch_dtype=torch.float32 # Use float32 for CPU compatibility
+    MODEL_ID,
+    token=HF_TOKEN,
+    torch_dtype=torch.float32,   # CPU-safe; switch to bfloat16/float16 for GPU if desired
 )
-tokenizer = AutoTokenizer.from_pretrained(model_id, token=hf_token)
+model.to(DEVICE)
+model.eval()
 
-
-# --- Step 2: Manually Set Chat Template (The Fix) ---
-# This block ensures the tokenizer has the correct Llama 3 chat format.
+# -------- Ensure chat template exists (Llama 3 format) --------
 if tokenizer.chat_template is None:
-    print("Chat template not found. Manually setting the Llama 3 template.")
     tokenizer.chat_template = """<|begin_of_text|>{% for message in messages %}{% if message['role'] == 'user' %}{{ '<|start_header_id|>user<|end_header_id|>\n\n' + message['content'] + '<|eot_id|>' }}{% elif message['role'] == 'system' %}{{ '<|start_header_id|>system<|end_header_id|>\n\n' + message['content'] + '<|eot_id|>' }}{% elif message['role'] == 'assistant' %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' + message['content'] + '<|eot_id|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' }}{% endif %}"""
 
+# Prefer the explicit end-of-turn token; fall back to eos if needed
+def _get_eot_id(tok):
+    tid = tok.convert_tokens_to_ids("<|eot_id|>")
+    return tid if isinstance(tid, int) and tid >= 0 else tok.eos_token_id
 
-# --- Step 3: System Prompt ---
-SYSTEM_PROMPT = """You are Sustainable.ai, a friendly, encouraging, and knowledgeable AI assistant. Your sole purpose is to help users discover simple, practical, and sustainable alternatives to their everyday actions. You are a supportive guide on their eco-journey, never a critic. Your goal is to make sustainability feel accessible and effortless."""
+EOT_ID = _get_eot_id(tokenizer)
+PAD_ID = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
 
+SYSTEM_PROMPT = (
+    "You are Sustainable.ai, a friendly, encouraging, and knowledgeable assistant. "
+    "Your sole purpose is to offer simple, practical, sustainable alternatives to everyday actions. "
+    "Be supportive and non-judgmental."
+)
 
-# --- Step 4: The Chat Function ---
-def chat(user_prompt):
-    # Structure the conversation for the template
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
+@torch.inference_mode()
+def chat(message, history):
+    """
+    Gradio ChatInterface signature:
+      - message: str (latest user turn)
+      - history: list[[user, assistant], ...]
+    Returns a single string.
+    """
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for u, a in history:
+        if u:
+            messages.append({"role": "user", "content": u})
+        if a:
+            messages.append({"role": "assistant", "content": a})
+    messages.append({"role": "user", "content": message})
 
-    # Use the tokenizer's chat template for correct formatting
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    
     inputs = tokenizer(prompt, return_tensors="pt")
-    input_length = inputs.input_ids.shape[1]
+    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
 
-    # Generate a response, making sure it knows when to stop
     outputs = model.generate(
         **inputs,
-        max_new_tokens=150,
+        max_new_tokens=200,
         do_sample=True,
         temperature=0.7,
         top_p=0.9,
-        eos_token_id=tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        eos_token_id=EOT_ID,
+        pad_token_id=PAD_ID,
     )
 
-    # Decode only the newly generated tokens
-    new_tokens = outputs[0][input_length:]
-    return tokenizer.decode(new_tokens, skip_special_tokens=True)
+    # Decode only the newly generated portion
+    new_tokens = outputs[0, inputs["input_ids"].shape[1]:]
+    text = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+    return text
 
+# -------- Define the app at module scope (important for Spaces) --------
+demo = gr.ChatInterface(
+    fn=chat,
+    title="Sustainable.ai 🌿",
+    description="Tell me what you plan to do, and I’ll suggest a simpler, greener alternative.",
+    submit_btn="Suggest",
+    retry_btn="Regenerate",
+    clear_btn="Clear",
+)
+# Optional: enable queue with a reasonable concurrency
+demo = demo.queue(max_size=32, concurrency_count=2)
 
-# --- Step 5: Gradio Interface ---
+# Local dev
 if __name__ == "__main__":
-    demo = gr.Interface(
-        fn=chat, 
-        inputs=gr.Textbox(label="Your Action", placeholder="e.g., I'm driving to the store..."), 
-        outputs=gr.Textbox(label="Sustainable Suggestion", lines=5), 
-        title="Sustainable.ai 🌿",
-        description="Tell me an action you're taking, and I'll suggest a simple, more sustainable alternative."
-    )
     demo.launch()
