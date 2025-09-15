@@ -1,4 +1,4 @@
-name: Sync to Hugging Face hub
+name: Test and Sync to Hugging Face hub
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  sync-to-hub:
+  test-and-sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -15,7 +15,23 @@ jobs:
           fetch-depth: 0
           lfs: true
 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest
+
+      - name: Run tests
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: PYTHONPATH=. pytest --maxfail=1 --disable-warnings -q
+
       - name: Push to Hugging Face
+        if: success()  # only run if tests pass
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -24,7 +40,7 @@ jobs:
           git push --force https://mlops-group8:$HF_TOKEN@huggingface.co/spaces/mlops-group8/case-study-1-local HEAD:main
 
       - name: Notify Slack (on success)
-        if: success()  
+        if: success()
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
