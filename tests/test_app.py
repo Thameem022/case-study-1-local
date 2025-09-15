@@ -1,32 +1,37 @@
 import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
-@pytest.fixture(autouse=True, scope="session")
-def patch_hf_classes():
-    with patch("app.AutoTokenizer") as mock_tokenizer_cls, \
-         patch("app.AutoModelForCausalLM") as mock_model_cls:
+class DummyTokenizer:
+    pad_token_id = 0
+    eos_token_id = 1
+    chat_template = "{% for message in messages %}{{ message['role'] }}: {{ message['content'] }}{% endfor %}"
 
-        # Fake tokenizer
-        mock_tokenizer = MagicMock()
-        mock_tokenizer.pad_token_id = 0
-        mock_tokenizer.eos_token_id = 1
-        mock_tokenizer.chat_template = "{% for message in messages %}{{ message['role'] }}: {{ message['content'] }}{% endfor %}"
-        mock_tokenizer.apply_chat_template.return_value = "mock_prompt"
-        mock_tokenizer.__call__.return_value = {"input_ids": [[0, 1]]}
-        mock_tokenizer.decode.return_value = "• Easy switch"
+    def apply_chat_template(self, conv, tokenize=False, add_generation_prompt=True):
+        return "mock_prompt"
 
-        mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
+    def __call__(self, prompt, return_tensors=None):
+        return {"input_ids": [[0, 1]]}
 
-        mock_model = MagicMock()
-        mock_model.generate.return_value = [[0, 1, 2, 3]]
-        mock_model_cls.from_pretrained.return_value = mock_model
+    def decode(self, tokens, skip_special_tokens=True):
+        return "• Easy switch"
 
-        yield 
+
+class DummyModel:
+    def to(self, device): return self
+    def eval(self): return self
+    def generate(self, **kwargs): return [[0, 1, 2, 3]]
+
+
+sys.modules["transformers"] = MagicMock(
+    AutoTokenizer=MagicMock(from_pretrained=lambda *a, **kw: DummyTokenizer()),
+    AutoModelForCausalLM=MagicMock(from_pretrained=lambda *a, **kw: DummyModel())
+)
 
 import app
 
+
+# ================== Tests ==================
 
 def test_calculate_footprint():
     total, stats = app.calculate_footprint(
@@ -39,7 +44,6 @@ def test_calculate_footprint():
 
 
 def test_chat_mock_runs():
-    """chat() should return mocked text without loading real model."""
     out = app.chat(messages=[{"role": "user", "content": "Hello"}], history=[])
     assert isinstance(out, str)
     assert "Easy switch" in out or "•" in out
