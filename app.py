@@ -297,4 +297,4 @@ with gr.Blocks(css="""
 demo = demo.queue(max_size=32, default_concurrency_limit=2)
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(server_port=8080)
